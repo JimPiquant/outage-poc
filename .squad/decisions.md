@@ -1,5 +1,56 @@
 # Squad Decisions
 
+## 2026-04-27 — Primary stand-in is live on GitHub Pages
+
+**Author:** Alex (Static Site Developer)  
+**Date:** 2026-04-27  
+**Status:** Done — Naomi & Amos can wire infra against real URLs.
+
+### Debranding
+
+- Removed "Publix" from user-facing content: `index.html` title/H1, `404.html` title, `README.md` prose. Verified: 0 remaining hits. Committed as `chore(primary): remove brand name from public site`, pushed, live page confirmed.
+
+### Live URLs
+
+| Purpose | URL | HTTP status (verified 2026-04-27) |
+|---|---|---|
+| Repo | <https://github.com/JimPiquant/outage-poc> (public) | n/a |
+| Site root | <https://jimpiquant.github.io/outage-poc/> | **200** |
+| Health (extension) | <https://jimpiquant.github.io/outage-poc/health.html> | **200** |
+| Health (clean) | <https://jimpiquant.github.io/outage-poc/health> | **200** (GH Pages auto-resolves) |
+
+### How it's published
+
+- Repo: `JimPiquant/outage-poc` (public, GitHub Pages enabled with `build_type=workflow`).
+- Workflow: `.github/workflows/pages.yml` uploads `sites/primary/` as the Pages artifact on every push to `main` that touches that directory.
+- First deploy succeeded in ~17s; subsequent edits to `sites/primary/**` will auto-redeploy.
+
+### ⚠️ Caveats Naomi & Amos need to know
+
+1. **It's a project Pages site, not a user site.** Content lives under the `/outage-poc/` subpath. There is no way to serve it at the apex of `jimpiquant.github.io` without renaming the repo to `jimpiquant.github.io` (and we're not doing that).
+2. **TM/AFD origin hostname** = `jimpiquant.github.io` (host only, no scheme, no path). This is what goes into `primaryOriginHostname` and what Traffic Manager's `externalEndpoint.target` should resolve.
+3. **Probe path MUST include the subpath.** A probe to `/health` against `jimpiquant.github.io` will hit GitHub's apex (404). The correct probe path is **`/outage-poc/health`** (or `/outage-poc/health.html` — both 200). I changed the `probePath` default in `infra/main.bicepparam` from `/health` → `/outage-poc/health` accordingly.
+4. **HTTPS is enforced** by GitHub Pages — TM/AFD must probe on **HTTPS:443**. HTTP requests get a 301.
+5. **Host header sensitivity:** GitHub Pages routes by `Host: jimpiquant.github.io`. AFD origins must forward this host header (don't rewrite to a custom host) or the origin will return 404. Same applies to any synthetic probe.
+6. **First-deploy delay** was negligible (~30s end-to-end), but content updates can lag ~1–2 min behind the push. Not a problem for steady-state probes.
+
+### Parameter values Naomi should now use
+
+```bicep
+// infra/main.bicepparam (already updated by Alex)
+param primaryOriginHostname = 'jimpiquant.github.io'
+param probePath              = '/outage-poc/health'
+```
+
+The `infra/README.md` parameter table and "Updating the primary origin hostname" section are updated to match.
+
+### What's NOT decided here
+
+- Custom domain (`status.publix.com` etc.) — still optional per Jim's earlier directive.
+- Fallback site is still scaffolded under `sites/fallback/` and will live on Azure SWA per Holden's architecture; not published to Pages.
+
+---
+
 ## 2026-04-27 — Post-Deploy Actions
 
 ### 2026-04-27T18:47:23Z: Resource group rename — `publix-poc-rg` → `rg-publix-poc`
@@ -214,6 +265,48 @@ None. Specifically:
 - Resource naming prefix: **publix-poc**.
 - Resource group: **New RG** (clean teardown).
 **Why:** Confirmed via ask_user form. These unblock Naomi (Bicep scaffold) and Alex (primary stand-in + fallback site).
+
+---
+
+## 2026-04-27 — Azure POC Deployment — Naomi
+
+**Status:** ✅ Deployed successfully.
+
+**Deployment:** `publix-poc-20260427-221459` in `rg-publix-poc` (eastus2). Provisioning state: Succeeded.
+
+**Resources created (7):**
+| Type | Name |
+|---|---|
+| `Microsoft.Web/staticSites` | `publix-poc-swa` |
+| `Microsoft.Cdn/profiles` | `publix-poc-afd` (Standard_AzureFrontDoor) |
+| `Microsoft.Cdn/profiles/afdEndpoints` | `publix-poc-ep` |
+| `Microsoft.Cdn/profiles/originGroups` | `publix-poc-og` |
+| `Microsoft.Cdn/profiles/originGroups/origins` | `publix-poc-origin-swa` |
+| `Microsoft.Cdn/profiles/afdEndpoints/routes` | (default route to SWA origin) |
+| `Microsoft.Network/trafficmanagerprofiles` | `publix-poc-tm` (Priority routing, 2 external endpoints) |
+
+**Output FQDNs:**
+- **SWA hostname:** `white-water-098b0170f.7.azurestaticapps.net`
+- **AFD endpoint hostname:** `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net`
+- **Traffic Manager FQDN (user entry point):** `publix-poc-tm.trafficmanager.net`
+- **Primary (non-Azure, GH Pages):** `jimpiquant.github.io` → `https://jimpiquant.github.io/outage-poc/` (200 OK)
+
+**Smoke checks passed:**
+- TM DNS resolves to primary (GH Pages) and is healthy. ✅
+- Primary origin responds 200. ✅
+- SWA and AFD return 404 (expected — awaiting Alex's deploy-swa.yml to populate content).
+
+**Secrets & handoffs:**
+- SWA deployment token retrieved and stored as GH Actions secret `AZURE_STATIC_WEB_APPS_API_TOKEN` on `JimPiquant/outage-poc` (not written to disk).
+- Triggered `deploy-swa.yml` (run `25022553077`) to populate fallback site.
+
+**Next steps:**
+1. Wait for `deploy-swa.yml` to finish; re-curl SWA and AFD endpoints to confirm 200.
+2. Amos points probes at `publix-poc-tm.trafficmanager.net` for failover tests.
+
+**Notes:**
+- Custom domain not in scope for POC.
+- SWA token rotation: `az staticwebapp secrets reset-api-key` → re-`gh secret set`.
 
 ---
 
