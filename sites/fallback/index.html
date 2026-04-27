@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="origin" content="fallback-swa">
+  <title>Publix — Service Notice</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #fff7ed;
+      color: #2a1a05;
+      min-height: 100vh;
+    }
+    .banner {
+      background: #f59e0b;
+      color: #2a1a05;
+      font-weight: 700;
+      text-align: center;
+      padding: 1rem;
+      font-size: 1.15rem;
+      border-bottom: 4px solid #b45309;
+    }
+    main {
+      max-width: 640px;
+      margin: 3rem auto;
+      padding: 2rem;
+      background: #fff;
+      border: 1px solid #fcd9a4;
+      border-radius: 12px;
+      box-shadow: 0 6px 20px rgba(180, 83, 9, 0.08);
+    }
+    h1 { margin-top: 0; color: #b45309; }
+    ul { line-height: 1.7; }
+    code, .tag {
+      background: #fef3c7;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+    .meta { margin-top: 2rem; font-size: 0.85rem; color: #7a4a05; }
+  </style>
+</head>
+<body>
+  <div class="banner">⚠️ Operating in fallback mode — some features are temporarily unavailable.</div>
+  <main>
+    <h1>We're still here.</h1>
+    <p>Our main site is having a moment. You're seeing a lightweight backup so
+    you still have a way to reach us.</p>
+    <p><strong>What still works:</strong></p>
+    <ul>
+      <li>This status page</li>
+      <li>Contact links and store hours (coming soon to this page)</li>
+    </ul>
+    <p><strong>What's temporarily unavailable:</strong></p>
+    <ul>
+      <li>Online ordering</li>
+      <li>Account login</li>
+    </ul>
+    <p>Thanks for your patience — we'll be back to full service shortly.</p>
+    <div class="meta">
+      Origin tag: <span class="tag">fallback-swa</span><br>
+      Page rendered at: <code id="ts">…</code>
+    </div>
+  </main>
+  <script>
+    document.getElementById('ts').textContent = new Date().toISOString();
+  </script>
+</body>
+</html>

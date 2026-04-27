@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/staticwebapp.config.json",
+  "routes": [
+    {
+      "route": "/health",
+      "rewrite": "/health.html",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store"
+      }
+    },
+    {
+      "route": "/health.html",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store"
+      }
+    }
+  ],
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/404.html"
+    }
+  },
+  "globalHeaders": {
+    "x-origin": "fallback-swa"
+  },
+  "mimeTypes": {
+    ".json": "application/json"
+  }
+}

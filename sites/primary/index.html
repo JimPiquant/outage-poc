@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="origin" content="primary-github-pages">
+  <title>Publix POC — Primary Site</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #0a3d2c 0%, #1d8a5a 100%);
+      color: #fff;
+      min-height: 100vh;
+    }
+    .banner {
+      background: #00c853;
+      color: #062b1c;
+      font-weight: 800;
+      text-align: center;
+      padding: 1rem;
+      font-size: 1.25rem;
+      letter-spacing: 0.02em;
+      border-bottom: 4px solid #062b1c;
+    }
+    main {
+      max-width: 720px;
+      margin: 3rem auto;
+      padding: 2rem;
+      background: rgba(255,255,255,0.08);
+      border-radius: 12px;
+      backdrop-filter: blur(4px);
+    }
+    h1 { margin-top: 0; font-size: 2rem; }
+    code, .tag {
+      background: rgba(0,0,0,0.35);
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+    .meta { margin-top: 2rem; font-size: 0.9rem; opacity: 0.85; }
+    .pulse {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: #00c853;
+      border-radius: 50%;
+      box-shadow: 0 0 0 0 rgba(0,200,83,0.7);
+      animation: pulse 1.6s infinite;
+      margin-right: 0.5rem;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0,200,83,0.7); }
+      70% { box-shadow: 0 0 0 12px rgba(0,200,83,0); }
+      100% { box-shadow: 0 0 0 0 rgba(0,200,83,0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">✅ PRIMARY ORIGIN (GitHub Pages)</div>
+  <main>
+    <h1><span class="pulse"></span>Publix POC — Primary Site</h1>
+    <p>You are seeing the <strong>primary</strong> origin. Traffic Manager has determined the primary endpoint is healthy and is routing you here.</p>
+    <p>Origin tag: <span class="tag">primary-github-pages</span></p>
+    <p>Health endpoint: <code>/health.html</code> (returns <code>OK - primary</code>)</p>
+    <div class="meta">
+      Page rendered at: <code id="ts">…</code><br>
+      User agent: <code id="ua">…</code>
+    </div>
+  </main>
+  <script>
+    document.getElementById('ts').textContent = new Date().toISOString();
+    document.getElementById('ua').textContent = navigator.userAgent;
+  </script>
+</body>
+</html>

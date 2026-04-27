@@ -1,5 +1,222 @@
 # Squad Decisions
 
+## 2026-04-27 — Post-Deploy Actions
+
+### 2026-04-27T18:47:23Z: Resource group rename — `publix-poc-rg` → `rg-publix-poc`
+
+**By:** Naomi (Cloud Infrastructure Engineer)  
+**Status:** Applied
+
+#### Change
+
+Renamed the deployment resource group everywhere it appears in the authored scaffold:
+
+| File | Change |
+|------|--------|
+| `infra/README.md` | All 8 occurrences of `publix-poc-rg` → `rg-publix-poc` (`az group create/delete`, `what-if`, `deployment group create/show` examples). |
+
+No `.bicep` / `.bicepparam` files reference the RG name — RG is a CLI/deploy-time concern, not a template-time one. No parameter defaults needed updating.
+
+#### Verification
+
+- `grep -rn "publix-poc-rg" infra/ docs/` → zero hits.
+- `grep -rn "rg-publix-poc" infra/ docs/` → 8 hits in `infra/README.md` (all expected).
+- `az bicep build --file infra/main.bicep` → clean (no warnings, no errors).
+
+#### Rationale
+
+`rg-<workload>` follows the Azure Cloud Adoption Framework abbreviation prefix convention. Aligns the POC with standard naming if it ever graduates beyond a demo.
+
+---
+
+## 2026-04-27 — Phase 1+2 Decisions (Merged from Inbox)
+
+### 2026-04-27T18:32:30Z: Failover Test Plan + Chaos Scripts
+
+**By:** Amos (Tester / Chaos)  
+**Status:** Authored — execution blocked on Naomi (infra deployed) and Alex (sites live with `/health` fingerprint).
+
+#### What I delivered
+
+- `tests/README.md` — full test plan: goals, pre-conditions, 6-scenario matrix, RTO math, manual-chaos instructions.
+- `tests/RUNBOOK.md` — step-by-step canonical "kill primary, watch failover, restore primary" demo for Jim.
+- `tests/scripts/probe.sh` — timestamped probe of TM FQDN, parses origin fingerprint from response body.
+- `tests/scripts/break-primary.sh` — disables primary TM endpoint via `az`.
+- `tests/scripts/restore-primary.sh` — re-enables it.
+- `tests/scripts/health-check.sh` — curls both `/health` URLs, exits non-zero if either != 200.
+
+All scripts are `chmod +x`, `set -euo pipefail`, parameterized (no hardcoded hostnames), syntax-checked.
+
+#### RTO budget I'm enforcing
+
+From `docs/architecture.md` §3.4:
+
+```
+detection      = (3 × 30s) + 10s            = 100 s
+dns_propagation = 60s TTL + 0–60s resolver  = 60–120 s
+RTO            = 160–220 s   (≈ 2.5–4 min)
+```
+
+**Pass threshold: 240 s** (architecture upper bound + 20 s grace for clock skew). If we measure > 240 s end-to-end during execution, the architecture claim is wrong and I will file a finding.
+
+#### Test scenarios (matrix)
+
+1. **Baseline** — both healthy, traffic to primary.
+2. **Primary 5xx** — disable TM endpoint; expect flip ≤ 240 s.
+3. **Primary `/health` 404** — break the health path on the actual origin; exercises full detection window.
+4. **Primary unreachable** — disable endpoint OR change target to `does-not-exist.invalid`.
+5. **Failback** — re-enable; expect return to primary ≤ 240 s.
+6. **DNS TTL** — observe cached-resolver client vs. fresh-resolver client during a flip.
+
+#### What I need from Naomi to actually run
+
+| Thing | Why |
+|---|---|
+| Resource group name | `break-primary.sh` / `restore-primary.sh` arg |
+| TM profile name | same |
+| **Primary** TM endpoint name (likely `primary`) | same |
+| TM FQDN | `probe.sh` arg |
+| AFD endpoint hostname | `health-check.sh` fallback URL |
+| Confirmation that primary endpoint is `--type ExternalEndpoints` (not Azure-typed) | hardcoded in break/restore scripts; needs update if she uses a different type |
+| TM TTL = 60 s, monitorConfig matches architecture (interval 30, tolerated 3, timeout 10) | otherwise my RTO budget is wrong and I'll renegotiate |
+
+#### What I need from Alex to actually run
+
+| Thing | Why |
+|---|---|
+| Primary GitHub Pages URL with working `/health` returning 200 | baseline pre-condition |
+| Fallback SWA `/health` returning 200 | same |
+| Confirmation that BOTH pages emit `<meta name="origin" content="...">` in their HTML — preferably with values `primary-github-pages` and `fallback-swa` | `probe.sh` distinguishes which origin served the request by parsing this tag |
+| If he chose different fingerprint strings, document them so I can update `FP_PRIMARY`/`FP_FALLBACK` at the top of `probe.sh` | otherwise probe rows will read `origin-tag=unknown` |
+
+#### Assumptions made (verify before running)
+
+1. **Origin fingerprint:** `<meta name="origin" content="primary-github-pages">` and `..."fallback-swa"` — assumed because Alex's decision file didn't exist at authoring time. `probe.sh` is defensive (falls back to literal substring match on those two strings) but values must be confirmed.
+2. **TM endpoint type:** `ExternalEndpoints` for the primary (since GitHub Pages is external). If Naomi uses a different type, update `--type` flag in break/restore scripts.
+3. **TM endpoint name** for the primary is `primary`. Trivially overridable (it's a CLI arg).
+
+#### Out of scope (intentionally)
+
+- Load testing the fallback path — POC, not perf validation.
+- Multi-region testing — single-region SWA per architecture decision.
+- Custom domain / cert testing — Jim deferred custom domain to Phase 4.
+
+**Next action when infra exists:** Jim populates the `export` block at the top of `tests/RUNBOOK.md` §0 and runs the steps in order. Total demo wall-clock: ~12–15 min.
+
+---
+
+### 2026-04-27T18:32:30Z: Sites + SWA deploy workflow — Alex
+
+**By:** Alex (Static Site Developer)  
+**Status:** Authored — not deployed.
+
+#### What shipped
+
+- `sites/primary/` — GitHub Pages stand-in (green theme, banner, render timestamp, `meta name="origin" content="primary-github-pages"`).
+- `sites/fallback/` — Azure Static Web App (amber theme, "operating in fallback mode" banner, `meta name="origin" content="fallback-swa"`).
+- `sites/fallback/staticwebapp.config.json` — exposes `/health` (rewrite to `/health.html`) and forces `Content-Type: text/plain`.
+- `.github/workflows/deploy-swa.yml` — push-to-main + workflow_dispatch, `Azure/static-web-apps-deploy@v1`, `app_location: sites/fallback`, no build, no API. Reads secret `AZURE_STATIC_WEB_APPS_API_TOKEN`.
+
+#### `/health` approach picked
+
+| Site | Implementation | Probe path Naomi must use |
+|------|----------------|--------------------------|
+| Primary (GitHub Pages) | Plain `health.html` file (no rewrites possible on GH Pages) | `/<repo>/health.html` — i.e. `/publix/health.html` |
+| Fallback (SWA) | `health.html` file + `routes` rule rewriting `/health` → `/health.html` with `text/plain` | `/health` (preferred) or `/health.html` |
+
+Body for both is uppercase plain text: `OK - primary` / `OK - fallback`.
+
+#### ⚠️ GitHub Pages subpath gotcha (handoff to Naomi)
+
+Project-repo Pages publish at `https://<owner>.github.io/<repo>/` — the repo
+name is part of every URL path. So Traffic Manager's primary endpoint must
+probe **`/publix/health.html`**, not `/health.html`. The hostname is
+`<owner>.github.io`. This stays true unless we move to a custom domain
+(skipped for POC) or a `<owner>.github.io` user/org repo.
+
+#### Secret name the workflow expects
+
+`AZURE_STATIC_WEB_APPS_API_TOKEN` — must be added as a GitHub Actions repo
+secret after Naomi creates the SWA resource. Token comes from the SWA
+resource's "Manage deployment token" pane in the Azure portal. Workflow
+will fail loudly until this is set.
+
+#### Things Naomi needs
+
+1. SWA name prefix `publix-poc-*` (per Jim's decision).
+2. SWA region: `eastus2`.
+3. After SWA exists: copy deployment token → set repo secret → trigger workflow → grab the resulting `*.azurestaticapps.net` hostname for AFD origin config.
+4. TM endpoint probe paths above.
+
+---
+
+### 2026-04-27T18:32:30Z: Bicep scaffold for resiliency POC
+
+**By:** Naomi (Cloud Infrastructure Engineer)  
+**Status:** Proposed → ready for review
+
+#### Summary
+
+Authored Phase 1 + Phase 2 Bicep scaffold under `infra/`. Compiles cleanly via `az bicep build` (CLI v2.85.0). No deploy executed.
+
+#### Module structure
+
+| File | Scope | Purpose | Outputs |
+|------|-------|---------|---------|
+| `infra/main.bicep` | `resourceGroup` | Composes the three modules. Caller pre-creates the RG. | `swaHostname`, `afdHostname`, `trafficManagerFqdn` |
+| `infra/main.bicepparam` | — | Default params (publix-poc, eastus2, /health, TTL 60). | — |
+| `infra/modules/swa.bicep` | RG | SWA Free SKU. **No repo binding** — content deploy is decoupled (Alex's domain). | `defaultHostname`, `id` |
+| `infra/modules/afd.bicep` | RG | AFD Standard: profile + endpoint + originGroup + origin (SWA) + route. HTTPS-only forwarding. | `endpointHostname`, `profileId` |
+| `infra/modules/trafficmanager.bicep` | RG | TM Priority routing, two `externalEndpoints`. Probe per architecture §3.3. | `fqdn`, `id` |
+
+#### Output flow between modules
+
+```
+swa.defaultHostname  ──►  afd.originHostname (origin + originHostHeader)
+afd.endpointHostname ──►  tm.fallbackHostname (Priority 2)
+param primaryOriginHostname ──►  tm.primaryHostname (Priority 1)
+```
+
+#### Parameterized vs hardcoded
+
+**Parameters (overridable):** `namePrefix`, `location`, `primaryOriginHostname`, `tmDnsRelativeName`, `probePath`, `tmTtlSeconds`.
+
+**Hardcoded (from architecture doc — change in code if architecture changes):**
+- TM probe: HTTPS / port 443 / interval 30s / timeout 10s / tolerated failures 3 / status 200 only.
+- AFD load balancing: sampleSize 4, successfulSamplesRequired 3, additionalLatency 50ms.
+- Tags: `project=publix-poc, owner=jim, purpose=resiliency-poc`.
+- AFD SKU: `Standard_AzureFrontDoor`.
+- SWA SKU: `Free`.
+
+#### Deviations from architecture doc
+
+None. Specifically:
+- Probe values match §3.3 exactly.
+- Both TM endpoints are `externalEndpoints` (GH Pages must be external; AFD isn't a first-class TM Azure endpoint type — external w/ FQDN is the documented path).
+- Custom domain skipped per locked decision.
+
+#### Notes for the team
+
+- **Blocks on Alex:** `primaryOriginHostname` ships as `<owner>.github.io` placeholder. Update `main.bicepparam` (or pass `-p primaryOriginHostname=…` on the CLI) once GH Pages is live.
+- **TM DNS name collision risk:** `publix-poc-tm.trafficmanager.net` must be globally unique. If taken at deploy time, change `tmDnsRelativeName` and re-run `what-if`.
+- **No deploy was executed.** Apply path is documented in `infra/README.md`.
+
+---
+
+### 2026-04-27T18:25:00Z: User decisions on architecture open questions
+
+**By:** Jim Welch (via Copilot)  
+**What:** Accepted all of Holden's recommendations:
+- Custom domain: **Skip** — use Azure hostnames for the POC.
+- AFD SKU: **Standard**.
+- Primary Azure region: **eastus2**.
+- Non-Azure primary stand-in: **GitHub Pages**.
+- Resource naming prefix: **publix-poc**.
+- Resource group: **New RG** (clean teardown).
+**Why:** Confirmed via ask_user form. These unblock Naomi (Bicep scaffold) and Alex (primary stand-in + fallback site).
+
+---
+
 ## Active Decisions
 
 ### 2026-04-27T18:17:29Z: Architecture Proposal — Option #1 (TM + AFD + SWA)

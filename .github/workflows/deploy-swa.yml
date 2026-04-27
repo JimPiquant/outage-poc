@@ -1,0 +1,43 @@
+name: Deploy fallback site to Azure Static Web Apps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sites/fallback/**"
+      - ".github/workflows/deploy-swa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-swa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build_and_deploy:
+    name: Build and deploy fallback site
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          # Deployment token created by Naomi when the SWA resource is provisioned.
+          # Add it under: repo → Settings → Secrets and variables → Actions
+          # Secret name: AZURE_STATIC_WEB_APPS_API_TOKEN
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "sites/fallback"
+          api_location: ""
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true
