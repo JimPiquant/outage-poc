@@ -81,9 +81,19 @@ az deployment group show \
 
 ## Updating the primary origin hostname
 
-The `primaryOriginHostname` parameter ships with a placeholder (`<owner>.github.io`). Once Alex publishes the GitHub Pages stand-in:
+✅ **Updated 2026-04-27** — Alex published the primary stand-in to GitHub Pages at
+<https://jimpiquant.github.io/outage-poc/> (repo: `JimPiquant/outage-poc`, served via
+GitHub Actions workflow from `sites/primary/`). `infra/main.bicepparam` now defaults to
+the live values; no edit needed before first deploy unless you're using a different host.
 
-1. Edit `infra/main.bicepparam` and set `primaryOriginHostname` to the real GitHub Pages host (host only — no `https://`, no path). Example: `jimwelch.github.io`.
+> ⚠️ This is a **project Pages site**, so content lives under the `/outage-poc/` subpath.
+> The TM/AFD origin hostname is just `jimpiquant.github.io`, but `probePath` MUST include
+> the `/outage-poc/` prefix or health probes will 404. Both `/outage-poc/health` and
+> `/outage-poc/health.html` return 200.
+
+If you republish to a different host later:
+
+1. Edit `infra/main.bicepparam` and set `primaryOriginHostname` to the new host (host only — no `https://`, no path).
 2. Re-run the deploy (it's idempotent — only the TM endpoint will change):
    ```sh
    az deployment group what-if -g rg-publix-poc -f infra/main.bicep -p infra/main.bicepparam
@@ -97,7 +107,8 @@ az deployment group create \
   -g rg-publix-poc \
   -f infra/main.bicep \
   -p infra/main.bicepparam \
-  -p primaryOriginHostname=jimwelch.github.io
+  -p primaryOriginHostname=jimpiquant.github.io \
+  -p probePath=/outage-poc/health
 ```
 
 ---
@@ -108,9 +119,9 @@ az deployment group create \
 |------|---------|-------|
 | `namePrefix` | `publix-poc` | Drives all resource names. |
 | `location` | `eastus2` | SWA control-plane region. AFD + TM are global. |
-| `primaryOriginHostname` | `<owner>.github.io` | **Placeholder** — set after Alex publishes GH Pages. |
+| `primaryOriginHostname` | `jimpiquant.github.io` | Live GH Pages host (project site under `/outage-poc/`). |
 | `tmDnsRelativeName` | `publix-poc-tm` | Becomes `<value>.trafficmanager.net`. Must be globally unique — change if collision. |
-| `probePath` | `/health` | Both TM and AFD probe this path over HTTPS:443; must return 200. |
+| `probePath` | `/outage-poc/health` | Both TM and AFD probe this path over HTTPS:443; must return 200. Subpath is required because primary is a project Pages site. |
 | `tmTtlSeconds` | `60` | DNS TTL on the TM profile. Lower = faster failover, higher DNS cost. |
 
 ---
