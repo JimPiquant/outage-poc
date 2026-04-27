@@ -1,6 +1,6 @@
 # Primary stand-in site (GitHub Pages)
 
-This is the **primary origin** for the Publix resiliency POC. It simulates a
+This is the **primary origin** for the resiliency POC. It simulates a
 non-Azure customer site. Traffic Manager probes its `/health.html` endpoint
 and routes traffic here as long as the probe returns HTTP 200.
 
@@ -57,8 +57,8 @@ https://<owner>.github.io/<repo>/
 …meaning the **repo name is part of every URL path**. For this repo that is:
 
 ```
-https://<owner>.github.io/publix/
-https://<owner>.github.io/publix/health.html
+https://jimpiquant.github.io/outage-poc/
+https://jimpiquant.github.io/outage-poc/health.html
 ```
 
 This affects Naomi's Traffic Manager config. The TM endpoint must be
@@ -68,7 +68,7 @@ configured as:
 |---------|-------|
 | Target hostname | `<owner>.github.io` |
 | Probe protocol | HTTPS / 443 |
-| Probe path | `/publix/health.html` ← **NOT** `/health.html` |
+| Probe path | `/outage-poc/health.html` ← **NOT** `/health.html` |
 
 If you ever publish from a **user/organization site repo** (named
 `<owner>.github.io`) or attach a custom domain via `CNAME`, the subpath
@@ -81,8 +81,8 @@ path is `/<repo>/health.html`.
 ## Verifying after publish
 
 ```bash
-# Replace <owner> and confirm both return HTTP 200
-curl -I https://<owner>.github.io/publix/
-curl    https://<owner>.github.io/publix/health.html
+# Confirm both return HTTP 200
+curl -I https://jimpiquant.github.io/outage-poc/
+curl    https://jimpiquant.github.io/outage-poc/health.html
 # Expected body: "OK - primary"
 ```
