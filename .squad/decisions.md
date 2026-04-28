@@ -369,3 +369,118 @@ See `docs/architecture.md` for topology diagrams, probe math, RTO calculations, 
 - All meaningful changes require team consensus
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+
+---
+
+## 2026-04-28 — Failover Demo Results — Scenario #1 (TM endpoint disable)
+
+**Author:** Amos (Tester / Chaos Engineer)  
+**Date:** 2026-04-28  
+**Deployment under test:** publix-poc-20260427-221459 (Naomi, 2026-04-27)  
+**Evidence log:** `tests/results/probe-2026-04-28-failover.log`
+
+### Verdict: **PASS** (with caveats — see Anomalies)
+
+| Metric | Measured | RTO Target | Result |
+|---|---|---|---|
+| Time-to-failover (break → first stable fallback row) | **18 s** | ≤ 240 s | ✅ PASS (13× faster) |
+| Time-to-failback (restore → first primary row)       | **28 s** | ≤ 240 s | ✅ PASS (8.5× faster) |
+| Errors during transition (no-endpoint / 5xx)         | **0**    | minimize | ✅ |
+
+### Pre-flight status
+
+| Check | Result | Notes |
+|---|---|---|
+| Subscription `ME-MngEnvMCAP866439-jimwelch-1` active | ✅ | `az account show` |
+| TM profile `publix-poc-tm` reachable | ✅ | TTL=60s, monitor path `/outage-poc/health`, interval=30s, tolerated failures=3 |
+| Primary endpoint (`primary-external` → `jimpiquant.github.io`) | ✅ Enabled / Online (priority 1) | |
+| Fallback endpoint (`fallback-afd` → `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net`) | ⚠️ Enabled / **Degraded** (priority 2) | See Anomaly #1 |
+| SWA direct (`white-water-098b0170f.7.azurestaticapps.net/health.html`) | ✅ HTTP 200 | content live |
+| AFD direct (`publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/health[.html]`) | ✅ HTTP 200, content-length 14 | |
+| Primary direct (`jimpiquant.github.io/outage-poc/health.html`) | ✅ HTTP 200 | |
+| Baseline DNS resolution of TM FQDN | ✅ CNAME → `jimpiquant.github.io.` | 3/3 ticks |
+
+**Note on RUNBOOK staleness:** runbook still says `RG=publix-poc-rg` and `PRIMARY_EP=primary`; live infra is `rg-publix-poc` and `primary-external`. Recommend Naomi/Sam patch RUNBOOK §0.
+
+### Endpoints used
+
+- TM profile: `publix-poc-tm`
+- Resource group: `rg-publix-poc`
+- Primary endpoint name: **`primary-external`**
+- Fallback endpoint name: `fallback-afd`
+
+### Timeline (UTC, ISO 8601)
+
+| Event | Timestamp |
+|---|---|
+| Probe started | 2026-04-28T18:26:36Z |
+| **BREAK issued** (`az ... --endpoint-status Disabled`) | **2026-04-28T18:26:38Z** |
+| Break ack from ARM | 2026-04-28T18:26:40Z |
+| Last primary CNAME observed | 2026-04-28T18:26:51Z |
+| **First fallback CNAME observed** | **2026-04-28T18:26:56Z** |
+| Brief DNS-cache flap back to primary (1 tick) | 2026-04-28T18:27:06Z |
+| Steady-state fallback locked in | 2026-04-28T18:27:12Z onward |
+| **RESTORE issued** (`az ... --endpoint-status Enabled`) | **2026-04-28T18:29:01Z** |
+| Restore ack from ARM | 2026-04-28T18:29:04Z |
+| **First primary CNAME observed** | **2026-04-28T18:29:29Z** |
+| Brief DNS-cache flap back to fallback (1 tick) | 2026-04-28T18:29:34Z |
+| Steady-state primary locked in | 2026-04-28T18:29:39Z onward |
+
+**Computed:**
+- Time-to-failover = 18:26:56 − 18:26:38 = **18 seconds**
+- Time-to-failback = 18:29:29 − 18:29:01 = **28 seconds**
+
+### Anomalies / Findings
+
+#### 1. Fallback endpoint is permanently Degraded (probe path mismatch) — **MEDIUM**
+TM profile probes `/outage-poc/health` against both endpoints. AFD's origin (the SWA)
+serves `/health` (and `/health.html`), **not** `/outage-poc/health`. Result:
+`fallback-afd` shows `EndpointMonitorStatus=Degraded` permanently, even though the
+AFD endpoint itself returns HTTP 200 on `/health.html` end-to-end.
+
+**Why we still PASSed:** TM priority routing has an "all-degraded last-resort"
+behavior — when the only enabled endpoint is Degraded, TM serves it anyway rather
+than return NXDOMAIN. The cutover worked. But this is fragile:
+- `AlwaysServe=Disabled` on fallback removes the safety net for the case where
+  TM probes are flapping for unrelated reasons.
+- Operationally we're relying on undocumented last-resort behavior, not on the
+  intended priority-failover semantics.
+
+**Recommendation:** Either (a) make the SWA serve `/outage-poc/health`
+(easiest — Sam/Alex), or (b) reconfigure TM monitor to use `/health.html` AND
+add `/outage-poc/health.html` to GH Pages, or (c) set `AlwaysServe=Enabled` on
+`fallback-afd`. Option (a) is cleanest.
+
+#### 2. `tests/scripts/probe.sh` is broken for this architecture — **MEDIUM**
+The script does an HTTPS GET against the TM FQDN with `Host: <tm-fqdn>`, but
+neither origin (GH Pages `*.github.io` cert, AFD `*.azurefd.net` cert) presents
+a SAN matching `publix-poc-tm.trafficmanager.net`. Every row came back
+`http-status=000 curl-fail` and `origin-tag=unknown` even at baseline.
+
+**Workaround used in this run:** built `.work/dns-probe.sh` (DNS-CNAME-only
+probe) — failover signal is the CNAME chain, which is the truth source TM is
+actually publishing. Evidence log uses this format.
+
+**Recommendation:** Either rewrite `probe.sh` to dig the CNAME and curl the
+*resolved* hostname (so SNI matches), or stand up a custom domain (e.g.
+`publix-poc.<somedomain>`) on TM with matching certs on both origins. For demo
+purposes the DNS probe is sufficient.
+
+#### 3. Brief DNS-cache flaps during cutover/cutback — **LOW**
+On both transitions we saw a single 5-second-tick flap back to the previous
+endpoint after the initial flip (18:27:06Z and 18:29:34Z). This is normal Google
+8.8.8.8 cache behavior across resolver pool members and is well within the
+60-second TTL window. No client impact.
+
+### Hygiene
+
+- ✅ Primary endpoint re-enabled at end of test (`Status=Enabled`, `Monitor=Online`, verified via `az network traffic-manager endpoint show`).
+- ✅ No other Azure resources mutated.
+- ✅ Evidence log saved to `tests/results/probe-2026-04-28-failover.log`.
+
+### Reviewer gate
+
+I'd accept this as a **demoable failover** for Jim's audience, with the asterisk
+that we should not advertise the fallback as "Healthy in TM" until Anomaly #1
+is fixed. Recommend Sam/Alex address Anomaly #1 and Anomaly #2 before the next
+external demo.

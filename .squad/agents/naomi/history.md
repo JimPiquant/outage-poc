@@ -25,3 +25,16 @@
   - **No deploy run.** Authoring only per task brief. README documents `what-if` → `create` → `delete` flow.
 
 - **2026-04-27:** Renamed RG `publix-poc-rg` → `rg-publix-poc` (Azure CAF naming convention) in `infra/README.md`. RG name is CLI-time only — no Bicep change needed; `az bicep build` re-verified clean.
+
+- **2026-04-27:** Deployed POC infra to Azure. Deployment name `publix-poc-20260427-221459` in RG `rg-publix-poc` (eastus2, sub `ME-MngEnvMCAP866439-jimwelch-1`). What-if was clean (7 resources, all `+ create`, no surprises). Provisioning state: **Succeeded**. Live FQDNs:
+  - **SWA:** `white-water-098b0170f.7.azurestaticapps.net` (resource `publix-poc-swa`)
+  - **AFD endpoint:** `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net` (profile `publix-poc-afd`, endpoint `publix-poc-ep`, OG `publix-poc-og`, origin `publix-poc-origin-swa`)
+  - **TM FQDN (user entry point):** `publix-poc-tm.trafficmanager.net`
+  - SWA deployment token fetched via `az staticwebapp secrets list` and pushed to GH Actions secret `AZURE_STATIC_WEB_APPS_API_TOKEN` on `JimPiquant/outage-poc`. Token never echoed.
+  - Smoke checks: SWA `/health` → 404 (expected, empty SWA), AFD root → 404 (expected, empty origin). TM DNS resolves to `jimpiquant.github.io` → GH Pages IPs (185.199.108-111.153) — confirms Priority 1 primary is healthy and selected. Primary `https://jimpiquant.github.io/outage-poc/` returns 200.
+  - Triggered `deploy-swa.yml` (`gh workflow run …` run id 25022553077) so Alex's content lands on the SWA and Amos can run failover tests.
+  - **Note for next time:** SWA deployment token is intentionally NOT a Bicep output (would leak in deployment history). Pull it on demand with `az staticwebapp secrets list`.
+
+- **2026-04-28 (Amos failover demo findings):**
+  - **TM probe path mismatch (MEDIUM):** Amos discovered that TM profile is configured to probe `/outage-poc/health` on all endpoints, but the fallback SWA only serves `/health` (not `/outage-poc/health`). Result: `fallback-afd` endpoint shows `Degraded` in TM console. The failover still worked via TM's last-resort all-degraded behavior, but the design is fragile. **Action for you:** coordinate with Sam/Alex to either (a) add the `/outage-poc/health` path to SWA config, or (b) update the TM probe path to `/health` and ensure GH Pages also serves `/outage-poc/health` as a fallback. Cleanest is (a).
+  - **RUNBOOK staleness:** RUNBOOK.md still references old RG name `publix-poc-rg` and old endpoint names `primary`/`fallback`. Live infra uses `rg-publix-poc` and `primary-external`/`fallback-afd`. **Action for you:** Patch `tests/RUNBOOK.md` §0 to reflect current resource names so Amos (or the external demo person) has canonical instructions.
