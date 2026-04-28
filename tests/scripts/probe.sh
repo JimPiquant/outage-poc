@@ -3,12 +3,16 @@
 #
 # Uses default Host header — works because TM uses CNAME-based DNS, not anycast
 # IPs. Each iteration:
-#   1. dig the TM FQDN, chase CNAMEs, take the *terminal* hostname
-#      (e.g. jimpiquant.github.io or <endpoint>.azurefd.net).
+#   1. Walk the CNAME chain top-down with single-step `dig +short CNAME` calls
+#      and stop at the first hostname matching a known service-identity
+#      pattern (*.github.io, *.azurefd.net, *.azureedge.net,
+#      *.azurestaticapps.net). Don't take "last non-IP" blindly — past the AFD
+#      endpoint the chain enters shared MS edge anycast labels
+#      (*.t-msedge.net) that route by Host header and will 404 us.
 #   2. curl that resolved origin hostname directly with `-sk` so SNI/Host
 #      naturally match the real origin's cert and routing.
 #   3. Pick the path that the resolved origin actually serves on
-#      (GitHub Pages project site lives under /outage-poc/, AFD/SWA at /).
+#      (GH Pages project site → /outage-poc/, AFD/SWA → /).
 #
 # Why no `--resolve` / Host-header override:
 #   The cutover signal we want is "where does the TM FQDN currently CNAME to"
@@ -50,38 +54,73 @@ TM_FQDN="$1"
 ITER="$2"
 INTERVAL="$3"
 
-# Pick a path appropriate for the origin we resolved to. Project-site GitHub
-# Pages lives under /outage-poc/; AFD/SWA serve at /.
+# Pick a path appropriate for the origin we resolved to.
+#   * GH Pages project site lives under /outage-poc/
+#   * AFD-in-front-of-SWA serves SWA content at the root → /
+#   * SWA direct hits also serve at /
+# (Note: per Amos's Finding #3, /outage-poc/ on AFD was suspected to be the
+# only served path; verified empirically that AFD/SWA serves /=200 with the
+# fallback-swa meta tag, while /outage-poc/ returns SWA's 404 page — which
+# *still* carries the meta tag, hence the misleading "tag matched but
+# status=404" rows in the prior demo. Keeping /.)
 path_for_origin() {
     local host="$1"
     case "$host" in
         *.github.io)             echo "/outage-poc/" ;;
-        *.azurefd.net|*.azureedge.net|*.azurestaticapps.net) echo "/" ;;
+        *.azurefd.net)           echo "/" ;;
+        *.azureedge.net)         echo "/" ;;
+        *.azurestaticapps.net)   echo "/" ;;
         *)                       echo "/" ;;
     esac
 }
 
-# Chase CNAME chain via `dig +short` and return the terminal label
-# (last non-IP entry, with trailing dot stripped). Falls back to the
-# original FQDN on dig failure so curl still has something to hit.
+# Return 0 if $1 looks like a known service-identity hostname (i.e. an actual
+# origin we own/configure), 1 otherwise. Used to stop the CNAME walk before it
+# slides into shared Microsoft anycast labels (e.g. *.t-msedge.net) that route
+# by Host header rather than by name.
+is_service_identity() {
+    case "$1" in
+        *.github.io)            return 0 ;;
+        *.azurefd.net)          return 0 ;;
+        *.azureedge.net)        return 0 ;;
+        *.azurestaticapps.net)  return 0 ;;
+    esac
+    return 1
+}
+
+# Walk the CNAME chain top-down using single-step `dig +short CNAME <host>`
+# lookups, starting from $1. Stop and return the first hostname that matches a
+# known service-identity pattern (is_service_identity). If the walk runs out of
+# CNAMEs before hitting one, fall back to the last non-IP host seen, and
+# finally to the original FQDN. This avoids the prior bug where "last non-IP"
+# blindly grabbed shared MS edge anycast labels past the AFD endpoint.
 resolve_terminal_host() {
     local fqdn="$1"
-    local chain
-    chain="$(dig +short +time=2 +tries=1 "$fqdn" 2>/dev/null || true)"
-    if [[ -z "$chain" ]]; then
-        echo "$fqdn"
-        return
-    fi
-    local terminal
-    terminal="$(printf '%s\n' "$chain" \
-        | grep -Ev '^[0-9.]+$' \
-        | tail -n1 \
-        | sed 's/\.$//')"
-    if [[ -z "$terminal" ]]; then
-        echo "$fqdn"
-    else
-        echo "$terminal"
-    fi
+    local current="$fqdn"
+    local last_host="$fqdn"
+    local hops=0
+    local max_hops=10
+    local next
+
+    while (( hops < max_hops )); do
+        local stripped="${current%.}"
+        if is_service_identity "$stripped"; then
+            echo "$stripped"
+            return
+        fi
+        next="$(dig +short +time=2 +tries=1 CNAME "$current" 2>/dev/null \
+            | head -n1 | sed 's/\.$//')"
+        if [[ -z "$next" ]]; then
+            break
+        fi
+        last_host="$next"
+        current="$next"
+        hops=$((hops + 1))
+    done
+
+    # No service-identity hit; return the last hostname we resolved (with
+    # trailing dot stripped) so curl still has something sensible to try.
+    echo "${last_host%.}"
 }
 
 printf '%-22s  %-42s  %-22s  %s\n' "time" "resolved-host" "origin-tag" "http-status"
