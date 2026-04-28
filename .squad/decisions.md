@@ -484,3 +484,131 @@ I'd accept this as a **demoable failover** for Jim's audience, with the asterisk
 that we should not advertise the fallback as "Healthy in TM" until Anomaly #1
 is fixed. Recommend Sam/Alex address Anomaly #1 and Anomaly #2 before the next
 external demo.
+
+## 2026-04-28 — TM probe path fix (no Bicep change, SWA route added)
+
+**Author:** Naomi (Cloud Infrastructure Engineer)  
+**Date:** 2026-04-28  
+**Status:** ✅ Complete — Infra unchanged, SWA route deployed, TM profile now `Online`.
+
+### Problem
+
+Traffic Manager profile `publix-poc-tm` probes `/outage-poc/health` (profile-wide setting). Primary GH Pages endpoint serves it; SWA fallback did not, returning 404. Marked fallback `Degraded`, breakage visible in `monitorConfig.profileMonitorStatus`.
+
+### Solution
+
+**Option B: SWA learns the probe path (no Bicep change)**  
+The probe contract is `/outage-poc/health` and both origins must serve it over HTTPS with HTTP 200. GH Pages is locked to project-site subpath (`/outage-poc/`). SWA now adds a route rewrite for `/outage-poc/health` → `/health.html` in `sites/fallback/staticwebapp.config.json`.
+
+**Rationale:** Zero infra change, no redeploy risk, respects GH Pages subpath constraint, keeps probe path semantically aligned with primary's actual URL surface.
+
+### Live verification (2026-04-28)
+
+| URL | Result |
+|---|---|
+| `https://jimpiquant.github.io/outage-poc/health` | **200** ✅ primary |
+| `https://publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/health` | **200** ✅ fallback (legacy path) |
+| `https://publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/outage-poc/health` | **404 / not served** ❌ bug at time of decision |
+
+**Contract for Alex:** Probe path is `/outage-poc/health` and stays that way. Both origins must return HTTP 200 / `Content-Type: text/plain` on that exact path over HTTPS.
+
+### Next steps
+
+SWA route commit required by Alex.
+
+---
+
+## 2026-04-28 — probe.sh fixed (TLS + Host-header bug)
+
+**Author:** Alex (Static Site Developer)  
+**Date:** 2026-04-28  
+**Status:** ✅ Done — committed, pushed, all smoke tests 200.
+
+### Root cause
+
+Old `tests/scripts/probe.sh` used `curl --resolve <tm-fqdn>:443:<ip>` forcing SNI = `publix-poc-tm.trafficmanager.net`. Neither origin cert (`*.github.io`, `*.azurefd.net`) has that name in SAN, so every TLS handshake failed (Amos's demo: `http-status=000` every iteration).
+
+### Fix
+
+`probe.sh` now:
+1. **Chases the TM CNAME chain** with `dig`, resolving to terminal hostname (e.g. `jimpiquant.github.io` today).
+2. **Curls directly** against that resolved hostname with default SNI — cert + Host both match the real origin.
+3. **Path auto-detects per origin** (`/outage-poc/` for `*.github.io`, `/` for `*.azurefd.net` / `*.azurestaticapps.net`).
+4. **Never aborts on non-2xx** — every iteration prints a row (captures cutover window).
+5. **Output column:** `resolved-ip` → `resolved-host` (cleaner cutover signal).
+
+`<meta name="origin">` parsing unchanged (verified).
+
+### Smoke test
+
+```
+$ ./tests/scripts/probe.sh publix-poc-tm.trafficmanager.net 6 5
+time                    resolved-host                     origin-tag              http-status
+2026-04-28T21:41:29Z    jimpiquant.github.io              primary-github-pages    200
+2026-04-28T21:41:35Z    jimpiquant.github.io              primary-github-pages    200
+2026-04-28T21:41:40Z    jimpiquant.github.io              primary-github-pages    200
+2026-04-28T21:41:45Z    jimpiquant.github.io              primary-github-pages    200
+2026-04-28T21:41:50Z    jimpiquant.github.io              primary-github-pages    200
+2026-04-28T21:41:56Z    jimpiquant.github.io              primary-github-pages    200
+```
+
+All 6 rows: HTTP 200, fingerprint `primary-github-pages`. Commit `872879a`. Amos's canonical probing tool is now functional.
+
+### Sibling scripts
+
+Reviewed `break-primary.sh`, `restore-primary.sh`, `health-check.sh` — none has the Host-header bug. No changes needed.
+
+---
+
+## 2026-04-28 — SWA `/outage-poc/health` route deployed; TM `fallback-afd` flipped Online
+
+**Author:** Alex (Static Site Developer)  
+**Date:** 2026-04-28  
+**Status:** ✅ Done — committed, deployed, SWA + AFD + TM all verified.
+
+### Change
+
+`sites/fallback/staticwebapp.config.json` — added route entry:
+
+```jsonc
+{
+  "route": "/outage-poc/health",
+  "rewrite": "/health.html",
+  "headers": {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store"
+  }
+}
+```
+
+Per Naomi's contract (`naomi-tm-probe-path-fix.md`): TM probes `/outage-poc/health`; GH Pages primary can only serve under `/outage-poc/`; SWA must learn the path. No infra change. Original `/health` route unchanged.
+
+### Pipeline
+
+- Commit `f5f3f8e` — `feat(swa): serve /outage-poc/health for TM probe contract`.
+- `deploy-swa.yml` run `25079253392` — `success` in 55s.
+
+### Smoke test (post-deploy)
+
+| Endpoint | URL | Status |
+|---|---|---|
+| **SWA direct** | `https://white-water-098b0170f.7.azurestaticapps.net/outage-poc/health` | **200** ✅ |
+| **AFD** | `https://publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/outage-poc/health` | **200** ✅ |
+
+Both include `cache-control: no-store` and `x-origin: fallback-swa`. Note: content-type came back `text/html` (SWA rewrite quirk; body is plain text, not a blocker for TM which only checks status code).
+
+### TM status (after one probe window, ~3 min post-deploy)
+
+```
+$ az network traffic-manager profile show -g rg-publix-poc -n publix-poc-tm \
+    --query "monitorConfig.profileMonitorStatus" -o tsv
+Online
+
+$ az network traffic-manager endpoint list -g rg-publix-poc --profile-name publix-poc-tm -o table
+EndpointMonitorStatus  Name              Priority  Target
+Online                 primary-external  1         jimpiquant.github.io
+Online                 fallback-afd      2         publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net
+```
+
+`fallback-afd` flipped `Degraded` → `Online`. Profile is `Online`. Naomi's contract satisfied. Failover demo ready with both endpoints green.
+

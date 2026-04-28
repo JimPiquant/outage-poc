@@ -21,3 +21,30 @@
   - **Primary (GH Pages):** `jimpiquant.github.io/outage-poc/` (already live)
   Primary is healthy and TM DNS is pointing to it. SWA content deploying now (Alex's workflow). Ready for test scenarios once SWA `/health` returns 200.
 - **2026-04-27 — TM "Disabled" vs real outage:** Disabling the TM endpoint skips the 100s probe-detection window. That's fine for demoing the DNS-swap half of RTO cleanly, but it understates the real RTO. Scenario #3 in the matrix breaks `/health` for real to exercise full detection+DNS path. Both should be run before declaring victory.
+
+## 2026-04-28 — Failover demo (Scenario #1, TM endpoint disable)
+- Executed end-to-end break-and-restore against publix-poc-tm.trafficmanager.net.
+- Endpoint name was `primary-external` (RUNBOOK said `primary` — stale).
+- **Time-to-failover: 18s** (target ≤240s) — PASS.
+- **Time-to-failback: 28s** (target ≤240s) — PASS.
+- 0 errors during transitions; one cosmetic DNS-cache flap on each side (8.8.8.8 resolver pool).
+- Evidence: `tests/results/probe-2026-04-28-failover.log`.
+- Verdict: `.squad/decisions/inbox/amos-failover-demo-results.md`.
+- **Bugs filed:**
+  1. Fallback `fallback-afd` permanently Degraded — TM probes `/outage-poc/health` but AFD/SWA serves `/health`. Cutover only worked via TM's all-degraded last-resort behavior. Recommend SWA also serve `/outage-poc/health`.
+  2. `tests/scripts/probe.sh` cannot work in current arch — uses TM FQDN as TLS Host against `*.github.io` / `*.azurefd.net` certs. Every probe returned `curl-fail`. Used a DNS-CNAME probe (`.work/dns-probe.sh`) as workaround.
+  3. RUNBOOK §0 has stale RG (`publix-poc-rg`) and endpoint name (`primary`).
+- Primary re-enabled, confirmed `Enabled / Online` post-test.
+
+## 2026-04-28 — Probe-path findings CLOSED (Naomi + Alex)
+
+**Status:** ✅ Both findings from failover demo are now resolved. System ready for clean external demo.
+
+- **Finding #1 (fallback Degraded):** ✅ **CLOSED** — Naomi diagnosed TM probe-path mismatch, chose Option B (SWA learns `/outage-poc/health`). Alex deployed SWA route rewrite (commit `f5f3f8e`, deploy run `25079253392`). TM `fallback-afd` endpoint flipped `Degraded` → `Online`. Profile status now `Online`.
+
+- **Finding #2 (probe.sh TLS failure):** ✅ **CLOSED** — Alex rewrote `tests/scripts/probe.sh` to chase TM CNAME and curl real origins directly with native SNI (commit `872879a`). 6/6 smoke test 200 with primary tag. Amos's canonical probing tool is now functional.
+
+**Impact:** Failover demo can now proceed with both TM endpoints `Online` and probe.sh actually working. No more reliance on TM's all-degraded last-resort behavior or external DNS probes.
+
+**Decisions integrated:** Three inbox files merged into `.squad/decisions.md` (naomi-tm-probe-path-fix, alex-probe-script-fix, alex-swa-probe-route).
+
