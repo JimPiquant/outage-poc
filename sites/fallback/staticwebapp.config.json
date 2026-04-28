@@ -10,6 +10,14 @@
       }
     },
     {
+      "route": "/outage-poc/health",
+      "rewrite": "/health.html",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store"
+      }
+    },
+    {
       "route": "/health.html",
       "headers": {
         "content-type": "text/plain; charset=utf-8",
