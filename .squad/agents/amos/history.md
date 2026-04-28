@@ -48,3 +48,17 @@
 
 **Decisions integrated:** Three inbox files merged into `.squad/decisions.md` (naomi-tm-probe-path-fix, alex-probe-script-fix, alex-swa-probe-route).
 
+
+## 2026-04-28 — Failover demo re-run (clean-evidence attempt)
+
+- Re-ran Scenario #1 with rewritten `probe.sh` (commit 872879a) and new SWA `/outage-poc/health` route (f5f3f8e).
+- **Pre-flight clean:** profile Online, both endpoints Enabled/Online, AFD `/outage-poc/health` → 200, baseline 6/6 200 primary-github-pages.
+- **TM cutover PASS:** time-to-failover (sustained) = **46s**, time-to-failback (sustained) = **96s**. Both well under 240s RTO.
+- **Demo-evidence FAIL:** entire fallback window in the log reads `unknown / 404` (31 of 60 rows). Verified out-of-band that AFD really was serving `fallback-swa` correctly — instrument bug, not infra bug.
+- **Finding #3 (NEW, partially re-opens #2):** `probe.sh` has two bugs on the fallback leg:
+  1. `resolve_terminal_host` chases CNAMEs past `*.azurefd.net` into Microsoft's `*.t-msedge.net` anycast labels.
+  2. `path_for_origin` uses `/` for `*.azurefd.net` but our AFD only serves `/outage-poc/...`.
+  Owner: Alex. Fix sketch + smoke test in the verdict file.
+- vs yesterday's CNAME-only probe: infra noticeably better (fallback is real Online cutover, not last-resort). Wall-clock slower (46s vs 18s, 96s vs 28s) — partly because real priority-routing cutover via probe-driven detection genuinely takes longer than yesterday's all-degraded last-resort path, partly resolver-pool noise.
+- `primary-external` re-enabled, profile Online confirmed post-test.
+- Evidence: `tests/results/probe-2026-04-28-failover-clean.log`. Verdict: `.squad/decisions/inbox/amos-failover-demo-rerun.md`.
