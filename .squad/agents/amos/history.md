@@ -62,3 +62,17 @@
 - vs yesterday's CNAME-only probe: infra noticeably better (fallback is real Online cutover, not last-resort). Wall-clock slower (46s vs 18s, 96s vs 28s) — partly because real priority-routing cutover via probe-driven detection genuinely takes longer than yesterday's all-degraded last-resort path, partly resolver-pool noise.
 - `primary-external` re-enabled, profile Online confirmed post-test.
 - Evidence: `tests/results/probe-2026-04-28-failover-clean.log`. Verdict: `.squad/decisions/inbox/amos-failover-demo-rerun.md`.
+
+
+## 2026-04-28 — Failover demo FINAL (clean evidence captured)
+
+- Re-ran Scenario #1 with twice-fixed `probe.sh` (Alex commit b07fad5) + SWA `/outage-poc/health` route (f5f3f8e).
+- **Pre-flight verified Alex's path-B claim empirically:** AFD `/` = 200 with `fallback-swa` meta tag; AFD `/outage-poc/` = 404 (with same meta tag — that's what fooled me last time). `path_for_origin` returning `/` for `*.azurefd.net` is correct. I was wrong in my Bug B; ack.
+- **Baseline:** 6/6 `200 primary-github-pages`, resolved-host `jimpiquant.github.io`. Clean.
+- **Time-to-failover (sustained): 38s** — PASS vs 240s RTO.
+- **Time-to-failback (sustained): 77s** — PASS vs 240s RTO.
+- **Tag distribution: 28 primary / 24 fallback-swa / 8 unknown.** All 8 `unknown` are transient `curl-fail` (TLS/socket flakes to AFD edge); **0 content-classification failures**. Resolved-host column shows the AFD endpoint hostname on every fallback row — no more sliding into `*.t-msedge.net`.
+- **vs prior runs:** yesterday 30/30/0 (DNS-only, last-resort fallback); last run 29/0/31 (broken AFD leg); this run 28/24/8. Cleanest classification yet on a real probe-driven cutover.
+- **Finding #3: CLOSED.** Both bugs (CNAME walk past AFD, AFD path) verified fixed against live traffic.
+- `primary-external` re-enabled, profile `Online` confirmed post-test.
+- Evidence: `tests/results/probe-2026-04-28-failover-final.log`. Verdict: `.squad/decisions/inbox/amos-failover-demo-final.md`.

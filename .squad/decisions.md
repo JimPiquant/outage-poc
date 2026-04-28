@@ -612,3 +612,66 @@ Online                 fallback-afd      2         publix-poc-ep-dpgrdzajc3gqbpe
 
 `fallback-afd` flipped `Degraded` → `Online`. Profile is `Online`. Naomi's contract satisfied. Failover demo ready with both endpoints green.
 
+
+---
+
+## 2026-04-28 — Failover demo: clean-evidence iteration (Finding #3 lifecycle)
+
+**Participants:** Amos (SRE), Alex (Sites/Frontend)  
+**Dates:** 2026-04-28 (21:53Z–22:21Z, 28 min cycle)  
+**Status:** ✅ CLOSED — demo-ready evidence captured.
+
+### Executive summary
+
+Finding #3 (probe.sh cannot classify AFD fallback leg) filed during Amos's broken-instrument rerun, diagnosed and fixed by Alex in same session, closed by Amos's final clean-evidence rerun. Both engineers in good standing — one filed a legitimate instrument bug, the other corrected a misdiagnosis (Bug B) and fixed both issues correctly. Final timings: failover 38s, failback 77s (both ≪ 240s RTO). Tag distribution 28/24/8 with zero content-classification failures (all 8 unknowns are transient curl-fails).
+
+### Timeline of the iteration
+
+1. **21:53Z — Amos rerun (broken instrument)** (`.squad/decisions/inbox/amos-failover-demo-rerun.md`)
+   - Scenario #1 (TM endpoint disable/re-enable) with Alex's `probe.sh` rewrite (commit `872879a`) + SWA route (commit `f5f3f8e`).
+   - **Verdict:** Failover/failback **PASS** (46s/96s sustained), but demo-evidence **FAIL** — probe reads `unknown/404` (or `curl-fail`) for entire fallback window (31 of 60 rows).
+   - **Cause identified:** Two bugs in `probe.sh` — Bug A: CNAME chase walked past the AFD endpoint (`*.azurefd.net`) into shared-infra label (`*.t-msedge.net`); Bug B (claimed): AFD only serves `/outage-poc/...` and `/` returns 404.
+   - **Finding #3 filed** — `probe.sh` cannot fingerprint AFD fallback leg; owner Alex with input from Naomi (path contract).
+   - Evidence log: `tests/results/probe-2026-04-28-failover-clean.log`
+
+2. **22:10Z — Alex probe fix** (`.squad/decisions/inbox/alex-probe-afd-leg-fix.md`)
+   - **Bug A (confirmed real)** — `resolve_terminal_host` changed: now walks CNAME chain top-down with single-step `dig +short CNAME` lookups, stops at first hostname matching service-identity pattern (`*.github.io`, `*.azurefd.net`, `*.azureedge.net`, `*.azurestaticapps.net`). Capped at 10 hops.
+   - **Bug B (misdiagnosis)** — Empirically tested and **rejected**. AFD root `/` returns `HTTP/2 200` with correct `<meta name="origin" content="fallback-swa">`. Amos's prior claim of 404 was based on `/outage-poc/` which SWA overrides with a 404 page that still carries the meta tag — this was the bear trap. Correct choice: `path_for_origin` returns `/` for `*.azurefd.net` (empirically verified).
+   - Commit: `b07fad5` (pushed to `origin/main`).
+   - **Smoke tests** — Primary baseline 6/6 200 (`primary-github-pages`, host `jimpiquant.github.io`). Fallback 5/6 200 (`fallback-swa`, AFD endpoint hostname), 1 transient `curl-fail` (acceptable TLS/socket flake). **Bug A fixed.** Path for AFD confirmed to be `/` by direct curl; Bug B's premise was wrong but the fix is right anyway.
+
+3. **22:21Z — Amos final clean-evidence rerun** (`.squad/decisions/inbox/amos-failover-demo-final.md`)
+   - Scenario #1 again with Alex's twice-fixed probe (commit `b07fad5`) + SWA (commit `f5f3f8e`).
+   - **Verdict:** Failover/failback **PASS** (38s/77s sustained). Demo-evidence **PASS** — 28/24/8 tag distribution, all 8 `unknown` are transient `curl-fail` (0 content-classification failures).
+   - **Pre-flight validation** — Alex's path claim empirically verified again: AFD `/` = 200 + correct meta tag; AFD `/outage-poc/` = 404 (SWA page with meta tag embedded).
+   - **Finding #3: CLOSED** — both bugs confirmed corrected: resolved-host never slides into `*.t-msedge.net`, every fallback row reads `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net` (the AFD endpoint). Path `/` for `*.azurefd.net` confirmed correct.
+   - Evidence log: `tests/results/probe-2026-04-28-failover-final.log`
+
+### Tag distribution comparison: all 3 runs
+
+| run | date | scenario | primary-github-pages | fallback-swa | unknown | curl-fail | notes |
+|---|---|---|---|---|---|---|---|
+| `probe-2026-04-28-failover.log` | 2026-04-27 (ref) | DNS-only probe, TM-degraded last-resort fallback | 30 | 30 | 0 | 0 | Baseline (no real cutover probing) |
+| `probe-2026-04-28-failover-clean.log` | 2026-04-28T21:53Z (this session, rerun 1) | HTTP+meta probe; bug A + B active | 29 | 0 | 31 (all classifier bugs) | many | CNAME walked into `*.t-msedge.net`; path bug compounded |
+| **`probe-2026-04-28-failover-final.log`** | **2026-04-28T22:21Z (this session, rerun 2)** | **HTTP+meta probe; both bugs fixed** | **28** | **24** | **8 (all transient curl-fail)** | **8** | **Zero content-classification failures. Demo-ready.** |
+
+### Why the walltimes improved (broken → final)
+
+- **Failover:** 46s → 38s (8s faster). Real probe-driven cutover with working AFD leg.
+- **Failback:** 96s → 77s (19s faster). Same reason; also cleaner transient resolution.
+
+The middle run was slower because the broken probe could not see the fallback, introducing measurement noise. With both legs fully instrumented and the AFD endpoint correctly identified, TM's priority routing becomes visible in the probe window.
+
+### Findings filed and disposition
+
+| finding | issue | filed-by | owner | status | disposition |
+|---|---|---|---|---|---|
+| #1 | TLS + Host-header bug in `probe.sh` v1 | Amos | Alex | ✅ Done | Fixed by commit `872879a` (CNAME chase + real SNI) |
+| #2 | SWA must learn `/outage-poc/health` for TM probe contract | Amos | Alex | ✅ Done | Fixed by commit `f5f3f8e` (SWA route added); TM fallback flipped Online |
+| #3 | Probe cannot classify AFD fallback leg (CNAME walks past endpoint + path misconception) | Amos | Alex | ✅ **CLOSED** | Fixed by commit `b07fad5` (service-identity CNAME walk + empirical path verification); all evidence verified in final run |
+
+### Next steps
+
+Failover demo is now demo-ready. Clean evidence captured, both endpoints Online and classified correctly, transition visible end-to-end. No open findings. Ready for external/management presentation.
+
+---
