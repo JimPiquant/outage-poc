@@ -675,3 +675,35 @@ The middle run was slower because the broken probe could not see the fallback, i
 Failover demo is now demo-ready. Clean evidence captured, both endpoints Online and classified correctly, transition visible end-to-end. No open findings. Ready for external/management presentation.
 
 ---
+
+## 2026-04-29 — Runbook refresh — post-validation
+
+**Author:** Alex (Sites/Frontend)  
+**Date:** 2026-04-29  
+**Decision file:** `.squad/decisions/inbox/alex-runbook-refresh.md`  
+**Commits:** `7cfa7e6` (code), `23c6099` (history)  
+**Status:** ✅ MERGED — runbooks ready for demo handoff.
+
+### Summary
+
+Refreshed `tests/RUNBOOK.md` and `tests/README.md` post-validation. All stale references fixed: RG name (`rg-publix-poc`), primary endpoint (`primary-external`), AFD path quirk documented (`/` returns 200), probe script contract codified, and measured RTO evidence captured (failover 38s / failback 77s, last validated 2026-04-29). Findings #1, #2, #3 all marked CLOSED with commit references. Next operator can run the failover demo from a cold start without tribal knowledge.
+
+### Files touched
+
+- `tests/RUNBOOK.md` — primary refresh (11 stale items fixed; Findings history table added).
+- `tests/README.md` — cross-checked and fixed stale infra references.
+
+### Validated state
+
+- RG: `rg-publix-poc` (eastus2).
+- Primary endpoint: `primary-external` (GitHub Pages).
+- AFD endpoint: `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net` — AFD `/` serves 200 with correct meta tag; probe path profile-wide `/outage-poc/health` routed to SWA.
+- Measured RTO: **38s failover / 77s failback** (budget 240s). Evidence log: `tests/results/probe-2026-04-28-failover-final.log` (28 primary / 24 fallback / 8 transient curl-fail; zero content-classification failures).
+
+### Findings status
+
+| # | Issue | Closed | Ref |
+|---|---|---|---|
+| #1 | TLS + Host-header bug in probe.sh v1 | ✅ | `872879a` |
+| #2 | SWA must learn `/outage-poc/health` for TM probe | ✅ | `f5f3f8e` |
+| #3 | Probe cannot classify AFD fallback leg | ✅ | `b07fad5` |

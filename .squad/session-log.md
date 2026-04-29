@@ -28,3 +28,26 @@ Three-phase cycle (rerun broken → fix → rerun final) resolved Finding #3 (pr
 ### Next steps
 
 Failover POC ready for external/management presentation. All infrastructure validated. Clean evidence captured.
+
+---
+
+## 2026-04-29 — Runbook refresh — post-validation
+
+**Date:** 2026-04-29 (03:55Z)  
+**Author:** Alex (Sites/Frontend) | **Merged by:** Scribe (housekeeping)  
+**Duration:** N/A (inbox merge)  
+**Status:** ✅ COMPLETE  
+
+### Summary
+
+Alex refreshed `tests/RUNBOOK.md` and `tests/README.md` for operator handoff. All 11 stale references fixed in place: RG name (`rg-publix-poc`), primary endpoint (`primary-external`), AFD path quirk documented, probe script contract codified (commits `872879a` + `b07fad5`), SWA route reference added (`f5f3f8e`), and measured RTO evidence captured and cited (failover 38s / failback 77s, last validated 2026-04-29). Findings #1, #2, #3 all marked CLOSED with commit references in new Findings history table (§10 of RUNBOOK).
+
+### Deliverables
+
+- **`tests/RUNBOOK.md`** — Complete refresh; 11 stale items resolved; live-infra table added (TM_FQDN, RG, profile, AFD, SWA, primary URL, subscription, probe path); hygiene rules added; Findings history table (all CLOSED).
+- **`tests/README.md`** — Cross-checked; stale infra references fixed (RG, endpoint hostname, paths).
+- **Canonical evidence** — Cited: `tests/results/probe-2026-04-28-failover-final.log` (28/24/8 tags; zero content-classification failures; RTO 38s/77s).
+
+### Operator impact
+
+Next engineer can run the failover demo cold-start from RUNBOOK without tribal knowledge. All prerequisites, manual chaos steps, expected outputs, AFD path quirk, and post-test cleanup documented and validated.
