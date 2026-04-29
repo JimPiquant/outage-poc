@@ -36,32 +36,43 @@ If any of those fail, the architecture's RTO claim is wrong and we file a findin
 Before running ANY scenario in §3, verify:
 
 - [ ] **Naomi** has deployed Bicep and shared:
-  - Resource group name (e.g., `publix-poc-rg`)
-  - TM profile name (e.g., `publix-poc-tm`)
-  - TM FQDN (e.g., `publix-poc-tm.trafficmanager.net`)
-  - TM endpoint names (e.g., `primary`, `fallback`)
-  - AFD endpoint hostname (e.g., `publix-poc-afd-xxxx.z01.azurefd.net`)
+  - Resource group name: `rg-publix-poc` (eastus2)
+  - TM profile name: `publix-poc-tm`
+  - TM FQDN: `publix-poc-tm.trafficmanager.net`
+  - TM endpoint names: `primary-external` (priority 1), `fallback-afd` (priority 2)
+  - AFD endpoint hostname: `publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net`
+  - SWA hostname: `white-water-098b0170f.7.azurestaticapps.net`
 - [ ] **Alex** has published:
-  - Primary GitHub Pages URL (e.g., `https://<user>.github.io/publix-primary/`)
-  - Confirmed `/health` returns HTTP 200 with body fingerprint
+  - Primary GitHub Pages URL: `https://jimpiquant.github.io/outage-poc/`
+    (project Pages site — there is **no apex `/health`**; TM probes
+    `/outage-poc/health` profile-wide)
+  - `/outage-poc/health` returns HTTP 200 with body fingerprint
     `<meta name="origin" content="primary-github-pages">`
-  - Fallback site deployed to SWA, `/health` returns HTTP 200 with body fingerprint
-    `<meta name="origin" content="fallback-swa">`
+  - Fallback site deployed to SWA; both `/health` and `/outage-poc/health`
+    return HTTP 200 with body fingerprint
+    `<meta name="origin" content="fallback-swa">` (the `/outage-poc/health`
+    route lives in `sites/fallback/staticwebapp.config.json`, commit `f5f3f8e`)
 - [ ] `az login` is current and the test operator has at least
   `Traffic Manager Contributor` on the RG.
 - [ ] Local tools: `bash >=4`, `curl`, `dig`, `az` CLI ≥ 2.55.
 - [ ] Baseline health check passes:
   ```bash
   ./scripts/health-check.sh \
-      https://<primary-github-pages>/health \
-      https://<afd-endpoint>/health
+      https://jimpiquant.github.io/outage-poc/ \
+      https://publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/
   ```
   Both return `200 OK`.
 - [ ] Baseline probe shows traffic going to primary:
   ```bash
-  ./scripts/probe.sh <tm-fqdn> 5 5
+  ./scripts/probe.sh publix-poc-tm.trafficmanager.net 6 5
   ```
-  All 5 rows show `origin-tag=primary-github-pages`.
+  All 6 rows show `origin-tag=primary-github-pages` (canonical smoke).
+- [ ] TM profile is currently `Online`:
+  ```bash
+  az network traffic-manager profile show \
+      -g rg-publix-poc -n publix-poc-tm \
+      --query profileMonitorStatus -o tsv
+  ```
 
 If any pre-condition fails, **stop**. Do not run chaos scenarios against an
 unverified baseline — you'll just measure noise.
@@ -114,17 +125,18 @@ demonstrating the **DNS propagation half** of RTO in isolation.
 ```bash
 # DISABLE primary (simulate outage)
 az network traffic-manager endpoint update \
-    --resource-group   publix-poc-rg \
+    --resource-group   rg-publix-poc \
     --profile-name     publix-poc-tm \
-    --name             primary \
+    --name             primary-external \
     --type             ExternalEndpoints \
     --endpoint-status  Disabled
 
-# RE-ENABLE primary (restore)
+# RE-ENABLE primary (restore) — ALWAYS run this at the end of a test,
+# and defensively if anything fails mid-run.
 az network traffic-manager endpoint update \
-    --resource-group   publix-poc-rg \
+    --resource-group   rg-publix-poc \
     --profile-name     publix-poc-tm \
-    --name             primary \
+    --name             primary-external \
     --type             ExternalEndpoints \
     --endpoint-status  Enabled
 ```
@@ -133,8 +145,8 @@ These are wrapped by `scripts/break-primary.sh` and `scripts/restore-primary.sh`
 
 ### 5.2 Via Azure Portal
 
-1. Portal → Resource groups → `publix-poc-rg` → `publix-poc-tm` (Traffic Manager profile).
-2. **Endpoints** blade → click `primary`.
+1. Portal → Resource groups → `rg-publix-poc` → `publix-poc-tm` (Traffic Manager profile).
+2. **Endpoints** blade → click `primary-external`.
 3. Set **Status** to `Disabled` → Save. (Restore by setting back to `Enabled`.)
 
 ### 5.3 Real outage simulation (slower, more realistic)
@@ -162,14 +174,14 @@ file's pre-conditions section and you can run.
 
 Anticipated argument set (Jim, you'll need these handy):
 
-| Variable | Source | Example |
+| Variable | Source | Value |
 |---|---|---|
 | `<tm-fqdn>` | Naomi (Bicep output) | `publix-poc-tm.trafficmanager.net` |
-| `<rg>` | Naomi (Bicep param) | `publix-poc-rg` |
+| `<rg>` | Naomi (Bicep param) | `rg-publix-poc` |
 | `<profile>` | Naomi (Bicep output) | `publix-poc-tm` |
-| `<primary-endpoint-name>` | Naomi (Bicep) | `primary` |
-| `<primary-health-url>` | Alex | `https://<user>.github.io/publix-primary/health` |
-| `<fallback-health-url>` | Alex (or AFD endpoint) | `https://publix-poc-afd-xxxx.z01.azurefd.net/health` |
+| `<primary-endpoint-name>` | Naomi (Bicep) | `primary-external` |
+| `<primary-health-url>` | Alex | `https://jimpiquant.github.io/outage-poc/` (visual) · TM probe path `/outage-poc/health` |
+| `<fallback-health-url>` | Alex / Naomi | `https://publix-poc-ep-dpgrdzajc3gqbpe6.b02.azurefd.net/` |
 | Body fingerprint (primary) | Alex's site `<meta>` tag | `primary-github-pages` |
 | Body fingerprint (fallback) | Alex's site `<meta>` tag | `fallback-swa` |
 
